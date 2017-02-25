@@ -42,9 +42,8 @@ connection::connection(asio::ip::tcp::socket socket, std::vector<std::shared_ptr
     : socket(std::move(socket)),
       connections(connections)
 {
-    auto self = shared_from_this();
     asio::async_read_until(socket, in_buf, '\n',
-        [self](const asio::error_code& ec, size_t num) {
+        [self = shared_from_this()](const asio::error_code& ec, size_t num) {
             if (!ec) {
                 // TODO Read buffer and determine whether connection is valid
             }
