@@ -6,7 +6,7 @@
 #include <asio.hpp>
 
 enum MessageType {
-    CONNECT, // Send ip to peer,         4 byte IPv4 address
+    CONNECT, // Send ip to peer,         4 byte IPv4 address, 2 byte port
     OPEN,    // Open request to/from id, 8 byte uint64_t
     ACCEPT,  // Accept open request,     1 byte boolean
     ERROR,   // Response from server,    n byte string
@@ -30,7 +30,7 @@ public:
     ~Connection();
 
     // Get the IP address of the connection
-    asio::ip::address get_address();
+    asio::ip::tcp::endpoint get_endpoint();
 
     // Queues a message to write, checks to make sure it's in the right format.
     void queue_write_message(MessageType type,

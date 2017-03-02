@@ -79,9 +79,9 @@ Connection::~Connection()
         connections.erase(pos);
 }
 
-asio::ip::address Connection::get_address()
+asio::ip::tcp::endpoint Connection::get_endpoint()
 {
-    return socket.remote_endpoint().address();
+    return socket.remote_endpoint();
 }
 
 void Connection::queue_write_message(MessageType type,
@@ -170,7 +170,8 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
                         auto other = pos->second.lock();
                         other->requested_from = std::weak_ptr<Connection>(shared_from_this());
                         other->queue_write_message(OPEN,
-                            asio::streambuf::const_buffers_type(&id, sizeof(id)));
+                            static_cast<asio::streambuf::const_buffers_type>(
+                                asio::buffer(&id, sizeof(id))));
                     }
                 } else if (type == ACCEPT) {
                     bool accepted;
@@ -181,10 +182,18 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
                     } else if (accepted) {
                         auto other = requested_from.lock();
                         // TODO IPv6 support
+                        uint16_t port = htons(other->get_endpoint().port());
+                        std::array<asio::streambuf::const_buffers_type, 2> data = {
+                            asio::buffer(other->get_endpoint().address().to_v4().to_bytes()),
+                            asio::streambuf::const_buffers_type(&port, sizeof(port)) };
                         queue_write_message(CONNECT,
-                            asio::buffer(other->get_address().to_v4().to_bytes()));
-                        other->queue_write_message(CONNECT, 
-                            asio::buffer(get_address().to_v4().to_bytes()));
+                            static_cast<asio::streambuf::const_buffers_type>(asio::buffer(data)));
+
+                        port = htons(get_endpoint().port());
+                        data = { asio::buffer(get_endpoint().address().to_v4().to_bytes()),
+                            asio::streambuf::const_buffers_type(&port, sizeof(port)) };
+                        other->queue_write_message(CONNECT,
+                            static_cast<asio::streambuf::const_buffers_type>(asio::buffer(data)));
                     }
                     requested_from = std::weak_ptr<Connection>();
                 }
