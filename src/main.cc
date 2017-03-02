@@ -1,113 +1,82 @@
 #include <iostream>
-#include <thread>
 #include <vector>
 
 #include <asio.hpp>
+#include <optionparser.h>
 
-#include <glibmm.h>
+#include "connection_handler.h"
 
-#define PORT 2784
+static const uint16_t default_port = 2738;
 
-enum MessageType {
-    CONNECT,
-    OPEN,
-    ACCEPT,
-    CHAT,
-};
-
-class connection : public std::enable_shared_from_this<connection> {
-public:
-    connection(asio::ip::tcp::socket socket, std::vector<std::shared_ptr<connection>>& connections);
-    ~connection();
-
-    void queue_read_message();
-    void queue_write_message(MessageType type, const std::vector<uint8_t>& buf);
-
-    uint64_t getID() { return id; }
-
-private:
-    void read_callback(const asio::error_code& ec, size_t num);
-    void write_callback(const asio::error_code& ec, size_t num);
-
-    asio::ip::tcp::socket socket;
-    asio::streambuf in_buf;
-    asio::streambuf out_buf;
-
-    uint64_t id;
-
-    std::vector<std::shared_ptr<connection>>& connections;
-};
-
-connection::connection(asio::ip::tcp::socket socket, std::vector<std::shared_ptr<connection>>& connections)
-    : socket(std::move(socket)),
-      connections(connections)
+// Parses the command line arguments
+void parse_command_line(int argc, char *argv[], uint16_t& port)
 {
-    asio::async_read_until(socket, in_buf, '\n',
-        [self = shared_from_this()](const asio::error_code& ec, size_t num) {
-            if (!ec) {
-                // TODO Read buffer and determine whether connection is valid
+    struct Arg : public option::Arg {
+        static option::ArgStatus Numeric(const option::Option& option, bool msg)
+        {
+            try {
+                size_t num = 0;
+                if (option.arg != 0)
+                    std::stol(option.arg, &num);
+                if (num != 0 && num == strlen(option.arg))
+                    return option::ARG_OK;
+            } catch (std::invalid_argument& e) {
+            } catch (std::out_of_range& e) {
             }
-        });
-}
 
-connection::~connection()
-{
-    socket.close();
-}
+            if (msg)
+                std::cerr << "Option '" << option.name << "'requires a numeric argument."
+                    << std::endl;
+            return option::ARG_ILLEGAL;
+        }
+    };
 
-class conn_handler {
-public:
-    conn_handler(asio::io_service& io_service, int port);
+    enum OptionIndex { UNKNOWN, HELP, PORT };
 
-private:
-    void accept_connection(const asio::error_code& ec);
+    const std::string usage_str[] = {
+        "USAGE: " + std::string(argv[0]) + " [options]\n\nOptions:",
+        "  --help, -h \tPrint usage and exit.",
+        "  --port, -p <num> \tSet the port to listen on, defaults to " +
+            std::to_string(default_port) + ".",
+    };
 
-    asio::ip::tcp::acceptor acceptor;
-    asio::ip::tcp::socket socket;
+    const option::Descriptor usage[] = {
+        { UNKNOWN, 0, "",  "",     Arg::None,    usage_str[UNKNOWN].c_str() },
+        { HELP,    0, "h", "help", Arg::None,    usage_str[HELP].c_str()    },
+        { PORT,    0, "p", "port", Arg::Numeric, usage_str[PORT].c_str()    },
+        { 0, 0, 0, 0, 0, 0 }
+    };
 
-    std::vector<std::shared_ptr<connection>> connections;
-};
+    argc -= (argc > 0);
+    argv += (argc > 0);
+    option::Stats stats(usage, argc, argv);
+    option::Option options[stats.options_max], buffer[stats.options_max];
+    option::Parser parse(usage, argc, argv, options, buffer);
 
-conn_handler::conn_handler(asio::io_service& io_service, int port)
-    : acceptor(io_service, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)),
-      socket(io_service)
-{
-    acceptor.async_accept(socket, sigc::mem_fun(this, &conn_handler::accept_connection));
-}
+    if (parse.error())
+        std::exit(EXIT_FAILURE);
 
-void conn_handler::accept_connection(const asio::error_code& ec)
-{
-    if (!ec) {
-        std::make_shared<connection>(std::move(socket), connections);
+    if (options[HELP]) {
+        option::printUsage(std::cout, usage);
+        std::exit(EXIT_SUCCESS);
+    } else if (options[PORT]) {
+        int num = std::stol(options[PORT].arg);
+        if (num <= 1023 || num > UINT16_MAX) {
+            std::cerr << "Port number must be between 1024 and " << UINT16_MAX << "." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+        port = num;
     }
-
-    acceptor.async_accept(socket, sigc::mem_fun(this, &conn_handler::accept_connection));
-}
-
-void parse_command_line(int argc, char *argv[], int& port)
-{
-    Glib::OptionEntry entry;
-    entry.set_long_name("port");
-    entry.set_short_name('p');
-    entry.set_description("Set the port for the server to listen on, defaults to "
-                          + std::to_string(PORT) + ".");
-
-    Glib::OptionGroup group("", "");
-    group.add_entry(entry, port);
-
-    Glib::OptionContext context;
-    context.set_main_group(group);
-    context.parse(argc, argv);
 }
 
 int main(int argc, char *argv[])
 {
-    int port = PORT;
+    uint16_t port = default_port;
     parse_command_line(argc, argv, port);
 
     asio::io_service io_service;
-
-    conn_handler handler(io_service, port);
+    ConnectionHandler handler(io_service, port);
 
     io_service.run();
+    return EXIT_SUCCESS;
 }
