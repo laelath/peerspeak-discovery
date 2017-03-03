@@ -152,10 +152,14 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
                 return;
         }
 
-        asio::async_read(socket, in_buf, asio::transfer_at_least(std::max(bytes - in_buf.size(),
-                    static_cast<size_t>(0))),
-            [this, self = shared_from_this(), type, bytes](const asio::error_code& ec,
-                size_t num) {
+        if (bytes > in_buf.size())
+            bytes -= in_buf.size();
+        else
+            bytes = 0;
+
+        asio::async_read(socket, in_buf, asio::transfer_at_least(bytes),
+            [this, self = shared_from_this(), type, bytes](const asio::error_code& ec, size_t num)
+            {
                 std::istream is(&in_buf);
                 if (type == OPEN) {
                     uint64_t other_id;
