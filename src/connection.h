@@ -32,6 +32,9 @@ public:
     // Get the IP address of the connection
     asio::ip::tcp::endpoint get_endpoint();
 
+    // Validates and opens the connection
+    void start_connection();
+
     // Queues a message to write, checks to make sure it's in the right format.
     void queue_write_message(MessageType type,
         const asio::streambuf::const_buffers_type& buf);

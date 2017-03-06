@@ -32,6 +32,22 @@ Connection::Connection(asio::ip::tcp::socket sock,
     : socket(std::move(sock)),
       connections(conns)
 {
+}
+
+Connection::~Connection()
+{
+    auto pos = connections.find(id);
+    if (pos != connections.end())
+        connections.erase(pos);
+}
+
+asio::ip::tcp::endpoint Connection::get_endpoint()
+{
+    return socket.remote_endpoint();
+}
+
+void Connection::start_connection()
+{
     asio::async_read_until(socket, in_buf, '\n',
         [this, self = shared_from_this()](const asio::error_code& ec, size_t num) {
             if (!ec) {
@@ -62,30 +78,22 @@ Connection::Connection(asio::ip::tcp::socket sock,
                     [this, self](const asio::error_code& ec, size_t num) {
                         if (!ec) {
                             std::istream is(&in_buf);
-                            is.read(reinterpret_cast<char *>(&id), 8);
+                            is.read(reinterpret_cast<char *>(&id), sizeof(id));
                             id = ntohll(id);
                             if (connections.find(id) == connections.end())
                                 connections[id] = self;
                             else
                                 return;
+                            auto end = get_endpoint();
+                            std::cout << "Established connection from "
+                                << end.address().to_string() << ":" << end.port() << ", ID " << id
+                                << "." << std::endl;
                             asio::async_read_until(socket, in_buf, '\n',
                                 std::bind(&Connection::read_callback, self, std::_1, std::_2));
                         }
                     });
             }
         });
-}
-
-Connection::~Connection()
-{
-    auto pos = connections.find(id);
-    if (pos != connections.end())
-        connections.erase(pos);
-}
-
-asio::ip::tcp::endpoint Connection::get_endpoint()
-{
-    return socket.remote_endpoint();
 }
 
 void Connection::queue_write_message(MessageType type,
@@ -151,14 +159,15 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
                     if (bytes != 8)
                         return;
                     uint64_t other_id;
-                    is >> other_id;
+                    is.read(reinterpret_cast<char *>(&other_id), sizeof(other_id));
                     other_id = ntohll(other_id);
                     auto pos = connections.find(other_id);
                     if (pos == connections.end()) {
-                        queue_write_message(ERROR, asio::buffer("Peer ID not found"));
+                        queue_write_message(ERROR, asio::buffer("Peer ID "
+                            + std::to_string(other_id) + " not found"));
                     } else if (pos->second.expired()) {
                         // Shouldn't be possible, but just in case
-                        queue_write_message(ERROR, asio::buffer("Peer ID expired"));
+                        queue_write_message(ERROR, asio::buffer("Peer expired"));
                     } else {
                         auto other = pos->second.lock();
                         other->requested_from = std::weak_ptr<Connection>(shared_from_this());
@@ -171,7 +180,7 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
                     if (bytes != 1)
                         return;
                     bool accepted;
-                    is >> accepted;
+                    is.read(reinterpret_cast<char *>(&accepted), sizeof(accepted));
                     if (requested_from.expired()) {
                         queue_write_message(ERROR,
                             asio::buffer("Peer disconnected or no connection requested"));
@@ -197,20 +206,27 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
 
                 asio::async_read_until(socket, in_buf, '\n', std::bind(&Connection::read_callback,
                         self, std::_1, std::_2));
-            } else if (ec != asio::error::eof)
-                std::cerr << "Error: " << ec.value() << ", " << ec.message() << "." << std::endl;
+            } else if (ec == asio::error::eof)
+                std::cout << "Connection ID " << id << " closed" << std::endl;
+            else
+                std::cerr << "Error on connection ID " << id << ": " << ec.value() << ", "
+                    << ec.message() << "." << std::endl;
         };
 
         if (read == 0)
             read_func(asio::error_code(), 0);
         else
             asio::async_read(socket, in_buf, asio::transfer_exactly(read), read_func);
-    } else if (ec != asio::error::eof)
-        std::cerr << "Error: " << ec.value() << ", " << ec.message() << "." << std::endl;
+    } else if (ec == asio::error::eof)
+        std::cout << "Connection ID " << id << " closed" << std::endl;
+    else
+        std::cerr << "Error on connection ID " << id << ": " << ec.value() << ", " << ec.message()
+            << "." << std::endl;
 }
 
 void Connection::write_callback(const asio::error_code& ec, size_t num)
 {
     if (ec && ec != asio::error::eof)
-        std::cerr << "Error: " << ec.value() << ", " << ec.message() << "." << std::endl;
+        std::cerr << "Error on connection ID " << id << ": " << ec.value() << ", " << ec.message()
+            << "." << std::endl;
 }

@@ -11,7 +11,8 @@ ConnectionHandler::ConnectionHandler(asio::io_service& io_service, uint16_t port
 void ConnectionHandler::accept_connection(const asio::error_code& ec)
 {
     if (!ec) {
-        std::make_shared<Connection>(std::move(socket), connections);
+        auto conn = std::make_shared<Connection>(std::move(socket), connections);
+        conn->start_connection();
     }
 
     acceptor.async_accept(socket, std::bind(&ConnectionHandler::accept_connection, this,
