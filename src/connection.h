@@ -37,7 +37,7 @@ public:
 
     // Queues a message to write, checks to make sure it's in the right format.
     void queue_write_message(MessageType type,
-        const asio::streambuf::const_buffers_type& buf);
+        const asio::const_buffer& buf);
 
 protected:
     std::weak_ptr<Connection> requested_from;
@@ -45,13 +45,17 @@ protected:
 private:
     // Callback for reading messages from socket.
     void read_callback(const asio::error_code& ec, size_t num);
+    void read_buffer(const asio::error_code& ec, size_t num,
+        std::function<void(std::istream&)> func);
 
     // Callback for writing messages to socket.
     void write_callback(const asio::error_code& ec, size_t num);
 
+    void read_open(std::istream& is);
+    void read_accept(std::istream& is);
+
     asio::ip::tcp::socket socket;
     asio::streambuf in_buf;
-    asio::streambuf out_buf;
 
     uint64_t id;
 
