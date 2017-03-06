@@ -54,7 +54,11 @@ Connection::Connection(asio::ip::tcp::socket sock,
                     return;
                 }
 
-                asio::async_read(socket, in_buf, asio::transfer_at_least(bytes),
+                size_t read = 0;
+                if (bytes > in_buf.size())
+                    read = bytes - in_buf.size();
+
+                asio::async_read(socket, in_buf, asio::transfer_exactly(read),
                     [this, self](const asio::error_code& ec, size_t num) {
                         if (!ec) {
                             std::istream is(&in_buf);
@@ -135,35 +139,20 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
             return;
         }
 
-        // CONNECT, CHAT, and ERROR messages are invalid when sent to discovery server
-        switch (type) {
-            case OPEN:
-                if (bytes != 8)
-                    return;
-                break;
-            case ACCEPT:
-                if (bytes != 1)
-                    return;
-                break;
-            case CONNECT:
-            case ERROR:
-            case CHAT:
-            case INVALID:
-                return;
-        }
-
+        size_t read = 0;
         if (bytes > in_buf.size())
-            bytes -= in_buf.size();
-        else
-            bytes = 0;
+            read = bytes - in_buf.size();
 
-        asio::async_read(socket, in_buf, asio::transfer_at_least(bytes),
-            [this, self = shared_from_this(), type, bytes](const asio::error_code& ec, size_t num)
-            {
+        auto read_func = [this, self = shared_from_this(), type, bytes]
+            (const asio::error_code& ec, size_t num) {
+            if (!ec) {
                 std::istream is(&in_buf);
                 if (type == OPEN) {
+                    if (bytes != 8)
+                        return;
                     uint64_t other_id;
                     is >> other_id;
+                    other_id = ntohll(other_id);
                     auto pos = connections.find(other_id);
                     if (pos == connections.end()) {
                         queue_write_message(ERROR, asio::buffer("Peer ID not found"));
@@ -173,11 +162,14 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
                     } else {
                         auto other = pos->second.lock();
                         other->requested_from = std::weak_ptr<Connection>(shared_from_this());
+                        uint64_t temp_id = htonll(id);
                         other->queue_write_message(OPEN,
                             static_cast<asio::streambuf::const_buffers_type>(
-                                asio::buffer(&id, sizeof(id))));
+                                asio::buffer(&temp_id, sizeof(id))));
                     }
                 } else if (type == ACCEPT) {
+                    if (bytes != 1)
+                        return;
                     bool accepted;
                     is >> accepted;
                     if (requested_from.expired()) {
@@ -200,11 +192,19 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
                             static_cast<asio::streambuf::const_buffers_type>(asio::buffer(data)));
                     }
                     requested_from = std::weak_ptr<Connection>();
-                }
+                } else
+                    return;
 
                 asio::async_read_until(socket, in_buf, '\n', std::bind(&Connection::read_callback,
                         self, std::_1, std::_2));
-            });
+            } else if (ec != asio::error::eof)
+                std::cerr << "Error: " << ec.value() << ", " << ec.message() << "." << std::endl;
+        };
+
+        if (read == 0)
+            read_func(asio::error_code(), 0);
+        else
+            asio::async_read(socket, in_buf, asio::transfer_exactly(read), read_func);
     } else if (ec != asio::error::eof)
         std::cerr << "Error: " << ec.value() << ", " << ec.message() << "." << std::endl;
 }
