@@ -28,7 +28,7 @@ std::string get_message_string(MessageType type)
 }
 
 Connection::Connection(asio::ip::tcp::socket sock,
-    std::map<uint64_t, std::weak_ptr<Connection>>& conns)
+                       std::map<uint64_t, std::weak_ptr<Connection>>& conns)
     : socket(std::move(sock)),
       connections(conns)
 {
@@ -127,7 +127,8 @@ void Connection::queue_write_message(MessageType type,
     data.push_back(asio::buffer(header));
     data.push_back(buf);
     asio::async_write(socket, data, asio::transfer_all(),
-        std::bind(&Connection::write_callback, shared_from_this(), std::_1, std::_2));
+                      std::bind(&Connection::write_callback, shared_from_this(),
+                                std::_1, std::_2));
 }
 
 void Connection::read_callback(const asio::error_code& ec, size_t num)
@@ -174,10 +175,11 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
             read_buffer(asio::error_code(), 0, read_func);
         else
             asio::async_read(socket, in_buf, asio::transfer_exactly(bytes - in_buf.size()),
-                std::bind(&Connection::read_buffer, self, std::_1, std::_2, read_func));
+                             std::bind(&Connection::read_buffer, self,
+                                       std::_1, std::_2, read_func));
     } else if (ec != asio::error::eof)
         std::cerr << "Asio error: ID " << id << " " << ec.value() << ", "
-            << ec.message() << std::endl;
+                  << ec.message() << std::endl;
 }
 
 void Connection::read_buffer(const asio::error_code& ec, size_t num,
@@ -186,11 +188,12 @@ void Connection::read_buffer(const asio::error_code& ec, size_t num,
     if (!ec) {
         std::istream is(&in_buf);
         func(is);
-        asio::async_read_until(socket, in_buf, '\n', std::bind(&Connection::read_callback,
-                shared_from_this(), std::_1, std::_2));
+        asio::async_read_until(socket, in_buf, '\n',
+                               std::bind(&Connection::read_callback, shared_from_this(),
+                                         std::_1, std::_2));
     } else if (ec != asio::error::eof) {
         std::cerr << "Asio error: ID " << id << ": " << ec.value() << ", "
-            << ec.message() << std::endl;
+                  << ec.message() << std::endl;
     }
 }
 
@@ -198,7 +201,7 @@ void Connection::write_callback(const asio::error_code& ec, size_t num)
 {
     if (ec && ec != asio::error::eof)
         std::cerr << "Asio error on connection ID " << id << ": " << ec.value() << ", "
-            << ec.message() << "." << std::endl;
+                  << ec.message() << std::endl;
 }
 
 void Connection::read_open(std::istream& is)
@@ -208,8 +211,8 @@ void Connection::read_open(std::istream& is)
     other_id = ntohll(other_id);
     auto pos = connections.find(other_id);
     if (pos == connections.end()) {
-        queue_write_message(ERROR, asio::buffer("Peer ID "
-            + std::to_string(other_id) + " not found"));
+        queue_write_message(ERROR, asio::buffer("Peer ID " + std::to_string(other_id)
+                                                + " not found"));
     } else if (pos->second.expired()) {
         // Shouldn't be possible, but just in case
         queue_write_message(ERROR, asio::buffer("Peer expired"));
@@ -227,7 +230,7 @@ void Connection::read_accept(std::istream& is)
     is.read(reinterpret_cast<char *>(&accepted), sizeof(accepted));
     if (requested_from.expired()) {
         queue_write_message(ERROR,
-            asio::buffer("Peer disconnected or no connection requested"));
+                            asio::buffer("Peer disconnected or no connection requested"));
     } else if (accepted) {
         auto other = requested_from.lock();
         // TODO IPv6 support

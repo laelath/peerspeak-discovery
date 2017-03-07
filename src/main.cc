@@ -26,7 +26,7 @@ void parse_command_line(int argc, char *argv[], uint16_t& port)
 
             if (msg)
                 std::cerr << "Option '" << option.name << "'requires a numeric argument."
-                    << std::endl;
+                          << std::endl;
             return option::ARG_ILLEGAL;
         }
     };

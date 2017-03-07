@@ -25,8 +25,8 @@ class Connection
     : public std::enable_shared_from_this<Connection> {
 public:
     // Creates a connection that manages sock and is stored in conns.
-    Connection(asio::ip::tcp::socket sock,
-        std::map<uint64_t, std::weak_ptr<Connection>>& conns);
+    Connection(asio::ip::tcp::socket sock, 
+               std::map<uint64_t, std::weak_ptr<Connection>>& conns);
     ~Connection();
 
     // Get the IP address of the connection
@@ -37,7 +37,7 @@ public:
 
     // Queues a message to write, checks to make sure it's in the right format.
     void queue_write_message(MessageType type,
-        const asio::const_buffer& buf);
+                             const asio::const_buffer& buf);
 
 protected:
     std::weak_ptr<Connection> requested_from;
@@ -46,7 +46,7 @@ private:
     // Callback for reading messages from socket.
     void read_callback(const asio::error_code& ec, size_t num);
     void read_buffer(const asio::error_code& ec, size_t num,
-        std::function<void(std::istream&)> func);
+                     std::function<void(std::istream&)> func);
 
     // Callback for writing messages to socket.
     void write_callback(const asio::error_code& ec, size_t num);
