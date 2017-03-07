@@ -72,28 +72,29 @@ void Connection::start_connection()
                     return;
                 }
 
-                size_t read = 0;
-                if (bytes > in_buf.size())
-                    read = bytes - in_buf.size();
+                auto read_func = [this, self](const asio::error_code& ec, size_t num) {
+                    if (!ec) {
+                        std::istream is(&in_buf);
+                        is.read(reinterpret_cast<char *>(&id), sizeof(id));
+                        id = ntohll(id);
+                        if (connections.find(id) == connections.end())
+                            connections[id] = self;
+                        else
+                            return;
+                        auto end = get_endpoint();
+                        std::cout << "Established connection from "
+                            << end.address().to_string() << ":" << end.port() << ", ID " << id
+                            << "." << std::endl;
+                        asio::async_read_until(socket, in_buf, '\n',
+                            std::bind(&Connection::read_callback, self, std::_1, std::_2));
+                    }
+                };
 
-                asio::async_read(socket, in_buf, asio::transfer_exactly(read),
-                    [this, self](const asio::error_code& ec, size_t num) {
-                        if (!ec) {
-                            std::istream is(&in_buf);
-                            is.read(reinterpret_cast<char *>(&id), sizeof(id));
-                            id = ntohll(id);
-                            if (connections.find(id) == connections.end())
-                                connections[id] = self;
-                            else
-                                return;
-                            auto end = get_endpoint();
-                            std::cout << "Established connection from "
-                                << end.address().to_string() << ":" << end.port() << ", ID " << id
-                                << "." << std::endl;
-                            asio::async_read_until(socket, in_buf, '\n',
-                                std::bind(&Connection::read_callback, self, std::_1, std::_2));
-                        }
-                    });
+                if (bytes > in_buf.size())
+                    asio::async_read(socket, in_buf, asio::transfer_exactly(bytes - in_buf.size()),
+                                     read_func);
+                else
+                    read_func(asio::error_code(), 0);
             }
         });
 }
@@ -171,12 +172,12 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
                 return;
         }
 
-        if (bytes < in_buf.size())
-            read_buffer(asio::error_code(), 0, read_func);
-        else
+        if (bytes > in_buf.size())
             asio::async_read(socket, in_buf, asio::transfer_exactly(bytes - in_buf.size()),
                              std::bind(&Connection::read_buffer, self,
                                        std::_1, std::_2, read_func));
+        else
+            read_buffer(asio::error_code(), 0, read_func);
     } else if (ec != asio::error::eof)
         std::cerr << "Asio error: ID " << id << " " << ec.value() << ", "
                   << ec.message() << std::endl;
@@ -234,24 +235,20 @@ void Connection::read_accept(std::istream& is)
     } else if (accepted) {
         auto other = requested_from.lock();
         // TODO IPv6 support
+        uint8_t buf_arr[6];
+        asio::mutable_buffer buf(buf_arr, sizeof(buf_arr));
+        asio::buffer_copy(buf, asio::buffer(other->get_endpoint().address().to_v4().to_bytes()));
         uint16_t port = htons(other->get_endpoint().port());
-        std::array<asio::const_buffer, 2> data = {
-            asio::buffer(other->get_endpoint().address().to_v4().to_bytes()),
-            asio::buffer(&port, sizeof(port)) };
-        size_t size = asio::buffer_size(data);
-        uint8_t buf_arr[size];
-        asio::mutable_buffer buf(buf_arr, size);
-        asio::buffer_copy(buf, data);
+        asio::buffer_copy(buf + 4, asio::buffer(&port, sizeof(port)));
         queue_write_message(CONNECT, buf);
 
+        uint8_t other_buf_arr[6];
+        asio::mutable_buffer other_buf(other_buf_arr, sizeof(other_buf_arr));
         port = htons(get_endpoint().port());
-        data = { asio::buffer(get_endpoint().address().to_v4().to_bytes()),
-            asio::buffer(&port, sizeof(port)) };
-        size = asio::buffer_size(data);
-        uint8_t other_buf_arr[size];
-        asio::mutable_buffer other_buf(other_buf_arr, size);
-        asio::buffer_copy(other_buf, data);
-        other->queue_write_message(CONNECT, buf);
+        asio::buffer_copy(other_buf, asio::buffer(get_endpoint().address().to_v4().to_bytes()));
+        uint16_t other_port = htons(get_endpoint().port());
+        asio::buffer_copy(other_buf + 4, asio::buffer(&other_port, sizeof(other_port)));
+        other->queue_write_message(CONNECT, other_buf);
     }
     requested_from = std::weak_ptr<Connection>();
 }
