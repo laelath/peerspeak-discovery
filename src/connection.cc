@@ -10,11 +10,10 @@
 #define ntohll(x) (x)
 #endif
 
-namespace std {
-    using namespace placeholders;
-} // namespace std
+using namespace std::placeholders;
 
-static const std::array<std::string, 5> type_strings = { "CONNECT", "OPEN", "ACCEPT", "ERROR", "CHAT" };
+static const std::array<std::string, 5> type_strings = {
+    "CONNECT", "OPEN", "ACCEPT", "ERROR", "CHAT" };
 
 MessageType parse_message_type(std::string type)
 {
@@ -27,9 +26,10 @@ std::string get_message_string(MessageType type)
     return type_strings[type];
 }
 
-Connection::Connection(asio::ip::tcp::socket sock,
+Connection::Connection(asio::io_service& io_service, asio::ip::tcp::socket sock,
                        std::map<uint64_t, std::weak_ptr<Connection>>& conns)
     : socket(std::move(sock)),
+      timer(io_service, boost::posix_time::seconds(10)),
       connections(conns)
 {
 }
@@ -50,76 +50,37 @@ asio::ip::tcp::endpoint Connection::get_endpoint()
 
 void Connection::start_connection()
 {
-    asio::async_read_until(socket, in_buf, '\n',
-        [this, self = shared_from_this()](const asio::error_code& ec, size_t num) {
-            if (!ec) {
-                std::string line;
-                std::istream is(&in_buf);
-                std::getline(is, line);
-
-                size_t idx = line.find(' ');
-                if (line.substr(0, idx) != "OPEN")
-                    return;
-
-                size_t bytes;
-                try {
-                    bytes = std::stoul(line.substr(idx + 1));
-                    if (bytes != 8)
-                        return;
-                } catch (std::invalid_argument& e) {
-                    return;
-                } catch (std::out_of_range& e) {
-                    return;
-                }
-
-                auto read_func = [this, self](const asio::error_code& ec, size_t num) {
-                    if (!ec) {
-                        std::istream is(&in_buf);
-                        is.read(reinterpret_cast<char *>(&id), sizeof(id));
-                        id = ntohll(id);
-                        if (connections.find(id) == connections.end())
-                            connections[id] = self;
-                        else
-                            return;
-                        auto end = get_endpoint();
-                        std::cout << "Established connection from "
-                            << end.address().to_string() << ":" << end.port() << ", ID " << id
-                            << "." << std::endl;
-                        asio::async_read_until(socket, in_buf, '\n',
-                            std::bind(&Connection::read_callback, self, std::_1, std::_2));
-                    }
-                };
-
-                if (bytes > in_buf.size())
-                    asio::async_read(socket, in_buf, asio::transfer_exactly(bytes - in_buf.size()),
-                                     read_func);
-                else
-                    read_func(asio::error_code(), 0);
-            }
+    auto self = shared_from_this();
+    timer.async_wait(
+        [this, self](const asio::error_code& ec) {
+            if (!ec)
+                socket.close();
         });
+    asio::async_read_until(socket, in_buf, '\n', std::bind(&Connection::read_start_message,
+                                                           self, _1, _2));
 }
 
 void Connection::queue_write_message(MessageType type,
     const asio::const_buffer& buf)
 {
     switch (type) {
-        case CONNECT:
-            if (asio::buffer_size(buf) != 6)
-                throw std::invalid_argument("CONNECT expected an IPv4 address and port");
-            break;
-        case OPEN:
-            if (asio::buffer_size(buf) != 8)
-                throw std::invalid_argument("OPEN expected a uint64_t id");
-            break;
-        case ACCEPT:
-            if (asio::buffer_size(buf) != 1)
-                throw std::invalid_argument("ACCEPT expected a boolean byte");
-            break;
-        case ERROR:
-        case CHAT:
-            break;
-        case INVALID:
-            throw std::invalid_argument("Cannot send INVALID message");
+    case CONNECT:
+        if (asio::buffer_size(buf) != 6)
+            throw std::invalid_argument("CONNECT expected an IPv4 address and port");
+        break;
+    case OPEN:
+        if (asio::buffer_size(buf) != 8)
+            throw std::invalid_argument("OPEN expected a uint64_t id");
+        break;
+    case ACCEPT:
+        if (asio::buffer_size(buf) != 1)
+            throw std::invalid_argument("ACCEPT expected a boolean byte");
+        break;
+    case ERROR:
+    case CHAT:
+        break;
+    case INVALID:
+        throw std::invalid_argument("Cannot send INVALID message");
     }
 
     std::string header = get_message_string(type) + " "
@@ -128,8 +89,60 @@ void Connection::queue_write_message(MessageType type,
     data.push_back(asio::buffer(header));
     data.push_back(buf);
     asio::async_write(socket, data, asio::transfer_all(),
-                      std::bind(&Connection::write_callback, shared_from_this(),
-                                std::_1, std::_2));
+                      std::bind(&Connection::write_callback, shared_from_this(), _1, _2));
+}
+
+void Connection::read_start_message(const asio::error_code& ec, size_t num)
+{
+    if (!ec) {
+        std::string line;
+        std::istream is(&in_buf);
+        std::getline(is, line);
+        size_t idx = line.find(' ');
+        if (line.substr(0, idx) != "OPEN")
+            return;
+        size_t bytes;
+        try {
+            bytes = std::stoul(line.substr(idx + 1));
+            if (bytes != 8)
+                return;
+        } catch (std::invalid_argument& e) {
+            return;
+        } catch (std::out_of_range& e) {
+            return;
+        }
+        if (bytes > in_buf.size())
+            asio::async_read(socket, in_buf, asio::transfer_exactly(bytes - in_buf.size()),
+                             std::bind(&Connection::read_start_buffer,
+                                       shared_from_this(), _1, _2));
+        else
+            read_start_buffer(asio::error_code(), 0);
+    }
+}
+
+void Connection::read_start_buffer(const asio::error_code& ec, size_t num)
+{
+    if (!ec) {
+        timer.cancel();
+        auto self = shared_from_this();
+        std::istream is(&in_buf);
+        is.read(reinterpret_cast<char *>(&id), sizeof(id));
+        id = ntohll(id);
+        if (connections.find(id) == connections.end())
+            connections[id] = self;
+        else {
+            queue_write_message(ERROR, asio::buffer("ID " + std::to_string(id)
+                                                    + " already exists in server"));
+            id = 0;
+            return;
+        }
+
+        auto end = get_endpoint();
+        std::cout << "Established connection from " << end.address().to_string() << ":"
+                  << end.port() << ", ID " << id << std::endl;
+        asio::async_read_until(socket, in_buf, '\n', std::bind(&Connection::read_callback,
+                                                               self, _1, _2));
+    }
 }
 
 void Connection::read_callback(const asio::error_code& ec, size_t num)
@@ -155,27 +168,27 @@ void Connection::read_callback(const asio::error_code& ec, size_t num)
         auto self = shared_from_this();
 
         switch (type) {
-            case OPEN:
-                if (bytes != 8)
-                    return;
-                read_func = std::bind(&Connection::read_open, self, std::_1);
-                break;
-            case ACCEPT:
-                if (bytes != 1)
-                    return;
-                read_func = std::bind(&Connection::read_accept, self, std::_1);
-                break;
-            case CONNECT:
-            case ERROR:
-            case CHAT:
-            case INVALID:
+        case OPEN:
+            if (bytes != 8)
                 return;
+            read_func = std::bind(&Connection::read_open, self, _1);
+            break;
+        case ACCEPT:
+            if (bytes != 1)
+                return;
+            read_func = std::bind(&Connection::read_accept, self, _1);
+            break;
+        case CONNECT:
+        case ERROR:
+        case CHAT:
+        case INVALID:
+            return;
         }
 
         if (bytes > in_buf.size())
             asio::async_read(socket, in_buf, asio::transfer_exactly(bytes - in_buf.size()),
                              std::bind(&Connection::read_buffer, self,
-                                       std::_1, std::_2, read_func));
+                                       _1, _2, read_func));
         else
             read_buffer(asio::error_code(), 0, read_func);
     } else if (ec != asio::error::eof)
@@ -191,7 +204,7 @@ void Connection::read_buffer(const asio::error_code& ec, size_t num,
         func(is);
         asio::async_read_until(socket, in_buf, '\n',
                                std::bind(&Connection::read_callback, shared_from_this(),
-                                         std::_1, std::_2));
+                                         _1, _2));
     } else if (ec != asio::error::eof) {
         std::cerr << "Asio error: ID " << id << ": " << ec.value() << ", "
                   << ec.message() << std::endl;
