@@ -3,6 +3,8 @@ project (PeerspeakDiscovery)
 
 include_directories (include)
 
+add_definitions (-DASIO_STANDALONE)
+
 set (SOURCES
     src/main.cc
     src/connection_handler.cc
