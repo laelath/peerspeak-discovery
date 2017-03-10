@@ -27,9 +27,12 @@ std::string get_message_string(MessageType type)
 }
 
 Connection::Connection(asio::io_service& io_service, asio::ip::tcp::socket sock,
+                       asio::ip::address &gateway, asio::ip::address &external,
                        std::map<uint64_t, std::weak_ptr<Connection>>& conns)
     : socket(std::move(sock)),
       timer(io_service, std::chrono::seconds(10)),
+      gateway(gateway, socket.remote_endpoint().port()),
+      external(external, socket.remote_endpoint().port()),
       connections(conns)
 {
 }
@@ -45,6 +48,8 @@ Connection::~Connection()
 
 asio::ip::tcp::endpoint Connection::get_endpoint()
 {
+    if (socket.remote_endpoint() == gateway)
+        return external;
     return socket.remote_endpoint();
 }
 
@@ -218,6 +223,17 @@ void Connection::write_callback(const asio::error_code& ec, size_t num)
                   << ec.message() << std::endl;
 }
 
+void Connection::send_connect(std::shared_ptr<Connection> other)
+{
+    // TODO IPv6 support
+    uint8_t buf_arr[6];
+    asio::mutable_buffer buf(buf_arr, sizeof(buf_arr));
+    asio::buffer_copy(buf, asio::buffer(other->get_endpoint().address().to_v4().to_bytes()));
+    uint16_t port = htons(other->get_endpoint().port());
+    asio::buffer_copy(buf + 4, asio::buffer(&port, sizeof(port)));
+    queue_write_message(CONNECT, buf);
+}
+
 void Connection::read_open(std::istream& is)
 {
     uint64_t other_id;
@@ -247,21 +263,8 @@ void Connection::read_accept(std::istream& is)
                             asio::buffer("Peer disconnected or no connection requested"));
     } else if (accepted) {
         auto other = requested_from.lock();
-        // TODO IPv6 support
-        uint8_t buf_arr[6];
-        asio::mutable_buffer buf(buf_arr, sizeof(buf_arr));
-        asio::buffer_copy(buf, asio::buffer(other->get_endpoint().address().to_v4().to_bytes()));
-        uint16_t port = htons(other->get_endpoint().port());
-        asio::buffer_copy(buf + 4, asio::buffer(&port, sizeof(port)));
-        queue_write_message(CONNECT, buf);
-
-        uint8_t other_buf_arr[6];
-        asio::mutable_buffer other_buf(other_buf_arr, sizeof(other_buf_arr));
-        port = htons(get_endpoint().port());
-        asio::buffer_copy(other_buf, asio::buffer(get_endpoint().address().to_v4().to_bytes()));
-        uint16_t other_port = htons(get_endpoint().port());
-        asio::buffer_copy(other_buf + 4, asio::buffer(&other_port, sizeof(other_port)));
-        other->queue_write_message(CONNECT, other_buf);
+        send_connect(other);
+        other->send_connect(shared_from_this());
     }
     requested_from = std::weak_ptr<Connection>();
 }

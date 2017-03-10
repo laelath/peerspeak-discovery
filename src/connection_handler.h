@@ -11,7 +11,8 @@
 class ConnectionHandler {
 public:
     // Constructs a connection handler for io_service, listening on port
-    ConnectionHandler(asio::io_service& io_service, uint16_t port);
+    ConnectionHandler(asio::io_service& io_service, uint16_t port, asio::ip::address &gateway,
+                      asio::ip::address &external);
 
 private:
     // Callback for async_accept
@@ -19,6 +20,8 @@ private:
 
     asio::ip::tcp::acceptor acceptor;
     asio::ip::tcp::socket socket;
+
+    asio::ip::address gateway, external;
 
     std::map<uint64_t, std::weak_ptr<Connection>> connections;
 };
