@@ -1,6 +1,8 @@
 #ifndef connection_h_INCLUDED
 #define connection_h_INCLUDED
 
+#include <chrono>
+#include <map>
 #include <string>
 
 #include <asio.hpp>
@@ -59,7 +61,7 @@ private:
     void read_accept(std::istream& is);
 
     asio::ip::tcp::socket socket;
-    asio::deadline_timer timer;
+    asio::basic_waitable_timer<std::chrono::steady_clock> timer;
     asio::streambuf in_buf;
 
     uint64_t id;

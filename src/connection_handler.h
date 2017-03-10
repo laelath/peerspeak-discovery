@@ -1,6 +1,8 @@
 #ifndef connection_handler_h_INCLUDED
 #define connection_handler_h_INCLUDED
 
+#include <map>
+
 #include <asio.hpp>
 
 #include "connection.h"

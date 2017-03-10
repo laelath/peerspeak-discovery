@@ -29,7 +29,7 @@ std::string get_message_string(MessageType type)
 Connection::Connection(asio::io_service& io_service, asio::ip::tcp::socket sock,
                        std::map<uint64_t, std::weak_ptr<Connection>>& conns)
     : socket(std::move(sock)),
-      timer(io_service, boost::posix_time::seconds(10)),
+      timer(io_service, std::chrono::seconds(10)),
       connections(conns)
 {
 }
