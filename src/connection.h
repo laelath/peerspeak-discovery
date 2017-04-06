@@ -11,6 +11,7 @@ enum MessageType {
     CONNECT = 0, // Send ip to peer,         4 byte IPv4 address, 2 byte port
     OPEN,    // Open request to/from id, 8 byte uint64_t
     ADD,     // Add connection
+    REMOVE,
     ACCEPT,  // Accept open request,     1 byte boolean
     ERROR,   // Response from server,    n byte string
     CHAT,    // Chat message,            n byte string
